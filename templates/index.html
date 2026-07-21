@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Automação de Relatórios</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         :root {
             --bg-color: #f3f4f6;
             --card-bg: #ffffff;
@@ -31,7 +35,7 @@
             padding: 2.5rem;
             border-radius: 16px;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-            max-width: 400px;
+            max-width: 500px;
             width: 100%;
             text-align: center;
         }
@@ -121,6 +125,69 @@
             font-weight: 600;
         }
 
+        .replacements-container {
+            margin-bottom: 1.5rem;
+            text-align: left;
+            background: #f8fafc;
+            padding: 1rem;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .rule-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .custom-input {
+            flex: 1;
+            min-width: 0;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .custom-input:focus {
+            border-color: var(--primary);
+        }
+
+        .btn-secondary {
+            background-color: transparent;
+            color: var(--primary);
+            border: 1px dashed var(--primary);
+            padding: 8px 16px;
+            font-size: 0.875rem;
+            width: 100%;
+            margin-top: 5px;
+        }
+
+        .btn-secondary:hover {
+            background-color: #eff6ff;
+        }
+
+        .btn-remove {
+            background-color: #fee2e2;
+            color: #ef4444;
+            border: none;
+            border-radius: 6px;
+            padding: 10px;
+            cursor: pointer;
+            width: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-remove:hover {
+            background-color: #fca5a5;
+            color: white;
+        }
+
         @keyframes pulse {
             0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
             70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
@@ -142,6 +209,14 @@
         
         <div id="file-info">Nenhum arquivo selecionado</div>
 
+        <div class="replacements-container">
+            <h3 style="font-size: 1rem; margin-bottom: 0.75rem; margin-top: 0; color: var(--text-main);">Termos para substituir</h3>
+            <div id="rules-list">
+                <!-- As linhas de inputs serão criadas aqui via JavaScript -->
+            </div>
+            <button type="button" id="add-rule-btn" class="btn-secondary">+ Adicionar novo termo</button>
+        </div>
+
         <button id="process-btn" disabled style="opacity: 0.5; cursor: not-allowed;">Processar Arquivo</button>
         
         <!-- <div id="status-message">
@@ -154,7 +229,55 @@
         const fileInput = document.getElementById('file-input');
         const fileInfo = document.getElementById('file-info');
         const processBtn = document.getElementById('process-btn');
+        
+        const rulesList = document.getElementById('rules-list');
+        const addRuleBtn = document.getElementById('add-rule-btn');
         let selectedFile = null;
+
+        // Função para criar uma nova linha de inputs (De -> Para)
+        function createRuleRow() {
+            const row = document.createElement('div');
+            row.className = 'rule-row';
+            
+            // Campo de busca
+            const inputDe = document.createElement('input');
+            inputDe.type = 'text';
+            inputDe.className = 'custom-input input-de';
+            inputDe.placeholder = 'Ex: [NOME_CLIENTE]';
+            
+            // Separador visual
+            const span = document.createElement('span');
+            span.innerHTML = '&rarr;';
+            span.style.color = 'var(--text-muted)';
+            
+            // Campo de substituição
+            const inputPara = document.createElement('input');
+            inputPara.type = 'text';
+            inputPara.className = 'custom-input input-para';
+            inputPara.placeholder = 'Ex: Empresa XYZ';
+            
+            // Botão de remover a linha
+            const btnRemove = document.createElement('button');
+            btnRemove.className = 'btn-remove';
+            btnRemove.innerHTML = '✕';
+            btnRemove.type = 'button';
+            btnRemove.onclick = () => row.remove();
+            
+            row.appendChild(inputDe);
+            row.appendChild(span);
+            row.appendChild(inputPara);
+            row.appendChild(btnRemove);
+            
+            return row;
+        }
+
+        // Evento para adicionar nova linha quando clicar no botão
+        addRuleBtn.addEventListener('click', () => {
+            rulesList.appendChild(createRuleRow());
+        });
+
+        // Inicializa com uma linha vazia por padrão
+        rulesList.appendChild(createRuleRow());
 
         // Ao clicar na área, abre o seletor de arquivos do sistema
         dropZone.addEventListener('click', () => fileInput.click());
@@ -221,6 +344,22 @@
             // Prepara o arquivo para envio via FormData
             const formData = new FormData();
             formData.append('documento', selectedFile);
+
+            // 1. Captura todas as regras preenchidas na interface
+            const rules = [];
+            const rows = document.querySelectorAll('.rule-row');
+            
+            rows.forEach(row => {
+                const de = row.querySelector('.input-de').value;
+                const para = row.querySelector('.input-para').value;
+                // Só adiciona se o campo "De" estiver preenchido
+                if(de.trim() !== '') {
+                    rules.push({ de: de, para: para });
+                }
+            });
+            
+            // 2. Transforma o array de regras em um texto JSON e adiciona ao envio
+            formData.append('substituicoes', JSON.stringify(rules));
 
             // Chama a nova rota Python
             fetch('/processar', {

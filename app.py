@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import threading
 import webbrowser
 import logging
@@ -50,17 +51,23 @@ def processar_arquivo():
         return jsonify({"success": False, "error": "Nome de arquivo vazio."}), 400
         
     try:
+        # Captura as regras de substituição enviadas pelo JavaScript
+        regras_str = request.form.get('substituicoes', '[]')
+        regras_json = json.loads(regras_str) # Converte de volta para lista Python
+        
         # 1. Salva o arquivo na pasta temporária
         caminho_salvamento = os.path.join(UPLOAD_FOLDER, arquivo.filename)
         arquivo.save(caminho_salvamento)
         
-        # 2. AQUI ENTRARÁ A LÓGICA DO PYTHON-DOCX / PYTHON-PPTX
-        # Exemplo: 
-        # novo_caminho = modificar_relatorio(caminho_salvamento)
+        # Exibe no terminal do servidor o que foi solicitado para podermos debugar
+        print(f"\n[INFO] Arquivo '{arquivo.filename}' recebido.")
+        print(f"[INFO] Regras de substituição solicitadas: {regras_json}")
         
-        # Simula o tempo que o Python levaria lendo e editando o documento
+        # 2. AQUI ENTRARÁ A LÓGICA DO PYTHON-DOCX / PYTHON-PPTX
+        # Exemplo: novo_caminho = modificar_relatorio(caminho_salvamento, regras_json)
+        
+        # Simula o tempo de processamento
         time.sleep(2) 
-        print(f"[INFO] Arquivo {arquivo.filename} recebido e salvo em {caminho_salvamento}")
         
         return jsonify({
             "success": True, 

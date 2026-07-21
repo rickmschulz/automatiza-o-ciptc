@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automação de Relatórios</title>
+    <style>
+        :root {
+            --bg-color: #f3f4f6;
+            --card-bg: #ffffff;
+            --text-main: #1f2937;
+            --text-muted: #6b7280;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --success: #10b981;
+        }
+        
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+
+        h2 {
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+            font-size: 1.5rem;
+        }
+
+        p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 2rem;
+            line-height: 1.5;
+        }
+
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        #status-message {
+            margin-top: 1.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            min-height: 20px; /* Evita pulo de layout */
+        }
+        
+        .pulse-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: var(--success);
+            border-radius: 50%;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--primary);
+            border-radius: 12px;
+            padding: 2rem 1rem;
+            margin-bottom: 1.5rem;
+            background-color: #f8fafc;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .upload-area:hover, .upload-area.dragover {
+            background-color: #eff6ff;
+            border-color: var(--primary-hover);
+        }
+
+        .upload-area p {
+            margin: 0;
+            color: var(--primary);
+            font-weight: 500;
+        }
+        
+        .upload-area small {
+            color: var(--text-muted);
+            display: block;
+            margin-top: 8px;
+        }
+
+        #file-info {
+            font-size: 0.9rem;
+            color: var(--text-main);
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Gerador de Relatórios</h2>
+        <p>A automação está rodando em segundo plano. O servidor será desligado automaticamente ao fechar esta aba.</p>
+        
+        <div class="upload-area" id="drop-zone">
+            <p>Arraste seu arquivo aqui</p>
+            <small>ou clique para selecionar (.docx, .pptx)</small>
+            <input type="file" id="file-input" style="display: none;" accept=".docx,.pptx">
+        </div>
+        
+        <div id="file-info">Nenhum arquivo selecionado</div>
+
+        <button id="process-btn" disabled style="opacity: 0.5; cursor: not-allowed;">Processar Arquivo</button>
+        
+        <div id="status-message">
+            <span class="pulse-indicator"></span> Servidor Conectado
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const fileInfo = document.getElementById('file-info');
+        const processBtn = document.getElementById('process-btn');
+        let selectedFile = null;
+
+        // Ao clicar na área, abre o seletor de arquivos do sistema
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        // Lida com a seleção tradicional via clique
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelect(e.target.files[0]);
+        });
+
+        // Eventos de arrastar e soltar
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            
+            if (e.dataTransfer.files.length > 0) {
+                handleFileSelect(e.dataTransfer.files[0]);
+            }
+        });
+
+        // Função para atualizar a interface quando um arquivo é escolhido
+        function handleFileSelect(file) {
+            if (!file) return;
+            
+            // Verifica a extensão (opcional, mas recomendado)
+            const validExtensions = ['.docx', '.pptx'];
+            const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+            
+            if (!validExtensions.includes(fileExtension)) {
+                fileInfo.innerHTML = '<span style="color: red;">Apenas arquivos Word ou PowerPoint são permitidos.</span>';
+                selectedFile = null;
+                processBtn.disabled = true;
+                processBtn.style.opacity = '0.5';
+                processBtn.style.cursor = 'not-allowed';
+                return;
+            }
+
+            selectedFile = file;
+            fileInfo.innerText = `Arquivo pronto: ${file.name}`;
+            
+            // Habilita o botão
+            processBtn.disabled = false;
+            processBtn.style.opacity = '1';
+            processBtn.style.cursor = 'pointer';
+        }
+
+        // Lógica de envio do arquivo para o backend Python
+        processBtn.addEventListener('click', function() {
+            if (!selectedFile) return;
+
+            const statusDiv = document.getElementById('status-message');
+            this.disabled = true;
+            this.style.opacity = '0.5';
+            this.innerText = 'Enviando e processando...';
+            
+            // Prepara o arquivo para envio via FormData
+            const formData = new FormData();
+            formData.append('documento', selectedFile);
+
+            // Chama a nova rota Python
+            fetch('/processar', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if(data.success) {
+                    statusDiv.innerHTML = '<span style="color: var(--success)">✓ ' + data.message + '</span>';
+                    this.innerText = 'Processar Outro Arquivo';
+                } else {
+                    statusDiv.innerHTML = '<span style="color: red;">✗ Erro: ' + data.error + '</span>';
+                    this.innerText = 'Tentar Novamente';
+                }
+                this.disabled = false;
+                this.style.opacity = '1';
+                selectedFile = null;
+                fileInfo.innerText = 'Nenhum arquivo selecionado';
+                fileInput.value = ''; // Limpa o input
+            })
+            .catch(error => {
+                statusDiv.innerHTML = '<span style="color: red;">✗ Erro de comunicação</span>';
+                this.disabled = false;
+                this.style.opacity = '1';
+                this.innerText = 'Tentar Novamente';
+            });
+        });
+
+        // LÓGICA DO HEARTBEAT
+        // Envia um ping para o backend a cada 3 segundos
+        setInterval(() => {
+            fetch('/heartbeat', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => {
+                if(!response.ok) throw new Error("Servidor offline");
+            })
+            .catch(error => {
+                // Se falhar silenciosamente, o servidor provavelmente já caiu
+                console.log('Falha ao enviar pulso. Servidor pode estar desligado.');
+                const statusDiv = document.getElementById('status-message');
+                statusDiv.innerHTML = '<span style="color: red; font-weight:bold;">✗ Conexão Perdida</span>';
+            });
+        }, 3000);
+    </script>
+</body>
+</html>

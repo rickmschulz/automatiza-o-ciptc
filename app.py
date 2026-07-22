@@ -1,20 +1,19 @@
 import os
 import time
 import json
+import io
 import threading
 import webbrowser
 import logging
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
+from docx import Document
+from pptx import Presentation
 
 # Desativa os logs padrão do Flask no terminal para manter a discrição na execução
 log = logging.getLogger('werkzeug')
 log.disabled = True
 
 app = Flask(__name__)
-
-UPLOAD_FOLDER = 'uploads'
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
 
 # Variável global para armazenar a última vez que o navegador enviou um sinal
 last_heartbeat_time = time.time()
@@ -39,44 +38,115 @@ def heartbeat():
     last_heartbeat_time = time.time()
     return jsonify({"status": "alive"})
 
+def processar_word(file_stream, regras):
+    """Abre o documento Word na memória e substitui os termos em parágrafos e tabelas."""
+    doc = Document(file_stream)
+    
+    def substituir_texto(paragraphs):
+        for p in paragraphs:
+            for regra in regras:
+                de, para = regra['de'], regra['para']
+                if de in p.text:
+                    # 1ª Tentativa: Substituir mantendo a formatação original (runs)
+                    for run in p.runs:
+                        if de in run.text:
+                            run.text = run.text.replace(de, para)
+                    
+                    # 2ª Tentativa (Fallback): Se a palavra quebrou entre múltiplos runs
+                    if de in p.text:
+                        p.text = p.text.replace(de, para)
+    
+    # Substituir no corpo do texto
+    substituir_texto(doc.paragraphs)
+    
+    # Substituir dentro de tabelas
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                substituir_texto(cell.paragraphs)
+                
+    # Salva o resultado em um buffer de memória em vez de no disco
+    output_stream = io.BytesIO()
+    doc.save(output_stream)
+    output_stream.seek(0)
+    return output_stream
+
+def processar_powerpoint(file_stream, regras):
+    """Abre o PowerPoint na memória e substitui termos nos slides e tabelas."""
+    prs = Presentation(file_stream)
+    
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            # Substituir em caixas de texto comuns
+            if shape.has_text_frame:
+                for p in shape.text_frame.paragraphs:
+                    for run in p.runs:
+                        for regra in regras:
+                            if regra['de'] in run.text:
+                                run.text = run.text.replace(regra['de'], regra['para'])
+            
+            # Substituir dentro de tabelas nos slides
+            if shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        for p in cell.text_frame.paragraphs:
+                            for run in p.runs:
+                                for regra in regras:
+                                    if regra['de'] in run.text:
+                                        run.text = run.text.replace(regra['de'], regra['para'])
+                                        
+    # Salva o resultado em um buffer de memória
+    output_stream = io.BytesIO()
+    prs.save(output_stream)
+    output_stream.seek(0)
+    return output_stream
+
 @app.route('/processar', methods=['POST'])
 def processar_arquivo():
-    """Rota que recebe o arquivo do frontend e realiza a automação."""
+    """Rota que recebe o arquivo e realiza a automação 100% em memória."""
     if 'documento' not in request.files:
-        return jsonify({"success": False, "error": "Nenhum arquivo enviado."}), 400
+        return "Nenhum arquivo enviado.", 400
     
     arquivo = request.files['documento']
     
     if arquivo.filename == '':
-        return jsonify({"success": False, "error": "Nome de arquivo vazio."}), 400
+        return "Nome de arquivo vazio.", 400
         
     try:
         # Captura as regras de substituição enviadas pelo JavaScript
         regras_str = request.form.get('substituicoes', '[]')
-        regras_json = json.loads(regras_str) # Converte de volta para lista Python
+        regras_json = json.loads(regras_str) 
         
-        # 1. Salva o arquivo na pasta temporária
-        caminho_salvamento = os.path.join(UPLOAD_FOLDER, arquivo.filename)
-        arquivo.save(caminho_salvamento)
+        # Lê o arquivo recebido diretamente para a memória
+        file_stream = io.BytesIO(arquivo.read())
         
-        # Exibe no terminal do servidor o que foi solicitado para podermos debugar
-        print(f"\n[INFO] Arquivo '{arquivo.filename}' recebido.")
+        print(f"\n[INFO] Processando '{arquivo.filename}' na memória...")
         print(f"[INFO] Regras de substituição solicitadas: {regras_json}")
         
-        # 2. AQUI ENTRARÁ A LÓGICA DO PYTHON-DOCX / PYTHON-PPTX
-        # Exemplo: novo_caminho = modificar_relatorio(caminho_salvamento, regras_json)
+        # Escolhe a função correta e processa em memória
+        extensao = arquivo.filename.lower()
+        nome_arquivo_saida = f"Modificado_{arquivo.filename}"
         
-        # Simula o tempo de processamento
-        time.sleep(2) 
+        if extensao.endswith('.docx'):
+            output_stream = processar_word(file_stream, regras_json)
+            mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif extensao.endswith('.pptx'):
+            output_stream = processar_powerpoint(file_stream, regras_json)
+            mimetype = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        else:
+            return "Formato não suportado.", 400
         
-        return jsonify({
-            "success": True, 
-            "message": f"Arquivo {arquivo.filename} processado com sucesso!"
-        })
+        # Envia o arquivo resultante diretamente de volta para o cliente, sem tocar no disco rígido
+        return send_file(
+            output_stream,
+            as_attachment=True,
+            download_name=nome_arquivo_saida,
+            mimetype=mimetype
+        )
         
     except Exception as e:
         print(f"[ERRO] Falha ao processar: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return str(e), 500
 
 def monitor_shutdown():
     """

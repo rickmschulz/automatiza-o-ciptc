@@ -42,7 +42,7 @@
 
         h2 {
             margin-top: 0;
-            margin-bottom: 0.5rem;
+            margin-bottom: 2rem;
             font-size: 1.5rem;
         }
 
@@ -199,7 +199,6 @@
 
     <div class="card">
         <h2>Gerador de Relatórios</h2>
-        <p>A automação está rodando em segundo plano. O servidor será desligado automaticamente ao fechar esta aba.</p>
         
         <div class="upload-area" id="drop-zone">
             <p>Arraste seu arquivo aqui</p>
@@ -219,9 +218,9 @@
 
         <button id="process-btn" disabled style="opacity: 0.5; cursor: not-allowed;">Processar Arquivo</button>
         
-        <!-- <div id="status-message">
-            <span class="pulse-indicator"></span> Servidor Conectado
-        </div> -->
+        <div id="status-message">
+            <span class="pulse-indicator"></span> Aguardando...
+        </div>
     </div>
 
     <script>
@@ -243,7 +242,7 @@
             const inputDe = document.createElement('input');
             inputDe.type = 'text';
             inputDe.className = 'custom-input input-de';
-            inputDe.placeholder = 'Ex: [NOME_CLIENTE]';
+            inputDe.placeholder = 'Ex: 21/07/2026';
             
             // Separador visual
             const span = document.createElement('span');
@@ -254,7 +253,7 @@
             const inputPara = document.createElement('input');
             inputPara.type = 'text';
             inputPara.className = 'custom-input input-para';
-            inputPara.placeholder = 'Ex: Empresa XYZ';
+            inputPara.placeholder = 'Ex: 01/08/2026';
             
             // Botão de remover a linha
             const btnRemove = document.createElement('button');
@@ -366,23 +365,77 @@
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
-            .then(data => {
-                if(data.success) {
-                    statusDiv.innerHTML = '<span style="color: var(--success)">✓ ' + data.message + '</span>';
-                    this.innerText = 'Processar Outro Arquivo';
-                } else {
-                    statusDiv.innerHTML = '<span style="color: red;">✗ Erro: ' + data.error + '</span>';
-                    this.innerText = 'Tentar Novamente';
+            .then(async response => {
+                // Como não usamos mais JSON, precisamos checar se houve erro pelo HTTP Status
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(errText || "Erro no servidor ao processar o arquivo.");
                 }
+                
+                // Tenta puxar o nome sugerido do cabeçalho de resposta, ou cria um padrão
+                let filename = "Modificado_" + selectedFile.name;
+                const disposition = response.headers.get('Content-Disposition');
+                if (disposition && disposition.includes('filename=')) {
+                    filename = disposition.split('filename=')[1].replace(/"/g, '');
+                }
+                
+                // Converte a resposta bruta no arquivo Blob real
+                const blob = await response.blob();
+                return { blob, filename };
+            })
+            .then(async ({ blob, filename }) => {
+                statusDiv.innerHTML = '<span style="color: var(--success)">✓ Processamento concluído!</span>';
+                
+                try {
+                    // Tenta invocar a janela moderna de salvar
+                    if (window.showSaveFilePicker) {
+                        const fileHandle = await window.showSaveFilePicker({
+                            suggestedName: filename,
+                            types: [{
+                                description: 'Documento Modificado',
+                                accept: {
+                                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+                                    'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx']
+                                }
+                            }]
+                        });
+                        
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        statusDiv.innerHTML = '<span style="color: var(--success)">✓ Arquivo salvo com sucesso!</span>';
+                    } else {
+                        // Força o "Plano B" em navegadores incompatíveis (ex: Firefox/Safari)
+                        throw new Error("Fallback de Download");
+                    }
+                } catch (err) {
+                    // PLANO B: Se der erro de segurança (demora) ou não suportar, faz o download automático sem travar a interface!
+                    if (err.name !== 'AbortError') {
+                        console.log("Acionando fallback de download clássico...");
+                        const urlBlob = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = urlBlob;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(urlBlob);
+                        statusDiv.innerHTML = '<span style="color: var(--success)">✓ Download automático concluído!</span>';
+                    } else {
+                        statusDiv.innerHTML = '<span style="color: var(--text-muted)">Salvamento cancelado pelo usuário.</span>';
+                    }
+                }
+
+                // Libera a interface para uso novamente independente de qual rota tomou
+                this.innerText = 'Processar Outro Arquivo';
                 this.disabled = false;
                 this.style.opacity = '1';
                 selectedFile = null;
                 fileInfo.innerText = 'Nenhum arquivo selecionado';
-                fileInput.value = ''; // Limpa o input
+                fileInput.value = '';
             })
             .catch(error => {
-                statusDiv.innerHTML = '<span style="color: red;">✗ Erro de comunicação</span>';
+                statusDiv.innerHTML = '<span style="color: red;">✗ Erro: ' + error.message + '</span>';
                 this.disabled = false;
                 this.style.opacity = '1';
                 this.innerText = 'Tentar Novamente';

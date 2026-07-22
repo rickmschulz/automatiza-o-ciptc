@@ -35,7 +35,7 @@
             padding: 2.5rem;
             border-radius: 16px;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-            max-width: 500px;
+            max-width: 800px;
             width: 100%;
             text-align: center;
         }
@@ -44,13 +44,6 @@
             margin-top: 0;
             margin-bottom: 2rem;
             font-size: 1.5rem;
-        }
-
-        p {
-            color: var(--text-muted);
-            font-size: 0.9rem;
-            margin-bottom: 2rem;
-            line-height: 1.5;
         }
 
         button {
@@ -66,11 +59,11 @@
             width: 100%;
         }
 
-        button:hover {
+        button:hover:not(:disabled) {
             background-color: var(--primary-hover);
         }
 
-        button:active {
+        button:active:not(:disabled) {
             transform: scale(0.98);
         }
 
@@ -78,7 +71,7 @@
             margin-top: 1.5rem;
             font-size: 0.875rem;
             font-weight: 500;
-            min-height: 20px; /* Evita pulo de layout */
+            min-height: 20px;
         }
         
         .pulse-indicator {
@@ -151,26 +144,24 @@
             outline: none;
             transition: border-color 0.2s, height 0.2s ease, box-shadow 0.2s ease;
             font-family: inherit;
-            resize: none; /* Impede que o usuário puxe pelo canto para redimensionar aleatoriamente */
-            overflow: hidden; /* Esconde a barra de rolagem */
+            resize: none; 
+            overflow: hidden; 
             line-height: 1.5;
-            min-height: 42px; /* Altura exata de 1 linha */
+            min-height: 42px; 
             background-color: #ffffff;
         }
 
         .custom-input:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); /* Efeito de foco suave (glow) */
-            z-index: 10; /* Garante que a sombra fique sobre os outros elementos */
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); 
+            z-index: 10; 
         }
         
         .input-de, .input-para {
-            /* Permite quebras de linha normais em ambos os campos */
             white-space: pre-wrap; 
         }
 
         .input-de:focus, .input-para:focus {
-            /* Quando entra o foco, permite que a caixa cresça. */
              min-height: 100px;
              overflow-y: auto; 
         }
@@ -230,9 +221,9 @@
         <div class="replacements-container">
             <h3 style="font-size: 1rem; margin-bottom: 0.75rem; margin-top: 0; color: var(--text-main);">Termos para substituir</h3>
             <div id="rules-list">
-                <!-- As linhas de inputs serão criadas aqui via JavaScript -->
+                <!-- Inputs gerados dinamicamente -->
             </div>
-            <button type="button" id="add-rule-btn" class="btn-secondary">+ Adicionar novo termo</button>
+            <button type="button" id="add-rule-btn" class="btn-secondary">+ Adicionar termo extra</button>
         </div>
 
         <button id="process-btn" disabled style="opacity: 0.5; cursor: not-allowed;">Processar Arquivo</button>
@@ -247,54 +238,47 @@
         const fileInput = document.getElementById('file-input');
         const fileInfo = document.getElementById('file-info');
         const processBtn = document.getElementById('process-btn');
-        
         const rulesList = document.getElementById('rules-list');
         const addRuleBtn = document.getElementById('add-rule-btn');
+        
         let selectedFile = null;
 
-        // Função para criar uma nova linha de inputs (De -> Para)
-        function createRuleRow() {
+        function createRuleRow(prefilledDe = "") {
             const row = document.createElement('div');
             row.className = 'rule-row';
             
-            // Função auxiliar para aplicar o comportamento de auto-expansão
             const applyAutoExpand = (element) => {
                 element.addEventListener('input', function() {
                     if(document.activeElement !== this) return; 
                     this.style.height = 'auto'; 
                     this.style.height = (this.scrollHeight) + 'px'; 
                 });
-                
                 element.addEventListener('blur', function() {
                     this.style.height = '42px';
                     this.scrollTop = 0; 
                 });
-
                 element.addEventListener('focus', function() {
                    this.style.height = (this.scrollHeight) + 'px'; 
                 });
             };
 
-            // Campo de busca agora também é um textarea
             const inputDe = document.createElement('textarea');
             inputDe.className = 'custom-input input-de';
-            inputDe.placeholder = 'Ex: [DATA] ou texto longo...';
+            inputDe.placeholder = 'Tag [EXEMPLO]';
             inputDe.rows = 1;
+            inputDe.value = prefilledDe; // Preenche se houver tag
             applyAutoExpand(inputDe);
             
-            // Separador visual
             const span = document.createElement('span');
             span.innerHTML = '&rarr;';
             span.style.color = 'var(--text-muted)';
             
-            // Campo de substituição
             const inputPara = document.createElement('textarea');
             inputPara.className = 'custom-input input-para';
-            inputPara.placeholder = 'Texto para substituir. Aceita múltiplas linhas...';
+            inputPara.placeholder = 'Novo texto...';
             inputPara.rows = 1;
             applyAutoExpand(inputPara);
             
-            // Botão de remover a linha
             const btnRemove = document.createElement('button');
             btnRemove.className = 'btn-remove';
             btnRemove.innerHTML = '✕';
@@ -309,23 +293,19 @@
             return row;
         }
 
-        // Evento para adicionar nova linha quando clicar no botão
         addRuleBtn.addEventListener('click', () => {
             rulesList.appendChild(createRuleRow());
         });
 
-        // Inicializa com uma linha vazia por padrão
+        // Inicializa com uma vazia
         rulesList.appendChild(createRuleRow());
 
-        // Ao clicar na área, abre o seletor de arquivos do sistema
         dropZone.addEventListener('click', () => fileInput.click());
 
-        // Lida com a seleção tradicional via clique
         fileInput.addEventListener('change', (e) => {
             handleFileSelect(e.target.files[0]);
         });
 
-        // Eventos de arrastar e soltar
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             dropZone.classList.add('dragover');
@@ -338,22 +318,19 @@
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('dragover');
-            
             if (e.dataTransfer.files.length > 0) {
                 handleFileSelect(e.dataTransfer.files[0]);
             }
         });
 
-        // Função para atualizar a interface quando um arquivo é escolhido
         function handleFileSelect(file) {
             if (!file) return;
             
-            // Verifica a extensão (opcional, mas recomendado)
             const validExtensions = ['.docx', '.pptx'];
             const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
             
             if (!validExtensions.includes(fileExtension)) {
-                fileInfo.innerHTML = '<span style="color: red;">Apenas arquivos Word ou PowerPoint são permitidos.</span>';
+                fileInfo.innerHTML = '<span style="color: red;">Apenas arquivos Word/PowerPoint permitidos.</span>';
                 selectedFile = null;
                 processBtn.disabled = true;
                 processBtn.style.opacity = '0.5';
@@ -362,71 +339,93 @@
             }
 
             selectedFile = file;
-            fileInfo.innerText = `Arquivo pronto: ${file.name}`;
             
-            // Habilita o botão
-            processBtn.disabled = false;
-            processBtn.style.opacity = '1';
-            processBtn.style.cursor = 'pointer';
+            // FEEDBACK VISUAL: Mostra que está carregando as tags
+            fileInfo.innerHTML = `Arquivo pronto: ${file.name} <br><small style="color:var(--primary);">Buscando tags no documento...</small>`;
+            
+            // BUSCA AUTOMÁTICA DE TAGS
+            const formData = new FormData();
+            formData.append('documento', file);
+            
+            fetch('/extrair_tags', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if(data.error) throw new Error(data.error);
+                
+                const tags = data.tags;
+                fileInfo.innerHTML = `Arquivo pronto: <b>${file.name}</b> <br><small style="color:var(--success);">✓ ${tags.length} tags encontradas</small>`;
+                
+                // Limpa a lista atual e preenche com as tags achadas
+                rulesList.innerHTML = '';
+                
+                if(tags.length > 0) {
+                    // Ordena as tags em ordem alfabética para ficar organizado
+                    tags.sort().forEach(tag => {
+                        rulesList.appendChild(createRuleRow(tag));
+                    });
+                } else {
+                    // Se não achar nada, coloca uma linha vazia padrão
+                    rulesList.appendChild(createRuleRow());
+                }
+                
+                processBtn.disabled = false;
+                processBtn.style.opacity = '1';
+                processBtn.style.cursor = 'pointer';
+            })
+            .catch(error => {
+                fileInfo.innerHTML = `Arquivo pronto: ${file.name} <br><small style="color:red;">Falha ao buscar tags. Adicione manualmente.</small>`;
+                rulesList.innerHTML = '';
+                rulesList.appendChild(createRuleRow());
+                
+                processBtn.disabled = false;
+                processBtn.style.opacity = '1';
+                processBtn.style.cursor = 'pointer';
+            });
         }
 
-        // Lógica de envio do arquivo para o backend Python
         processBtn.addEventListener('click', function() {
             if (!selectedFile) return;
 
             const statusDiv = document.getElementById('status-message');
             this.disabled = true;
             this.style.opacity = '0.5';
-            this.innerText = 'Enviando e processando...';
+            this.innerText = 'Processando arquivo...';
+            statusDiv.innerHTML = '<span class="pulse-indicator"></span> Processando e gerando arquivo...';
             
-            // Prepara o arquivo para envio via FormData
             const formData = new FormData();
             formData.append('documento', selectedFile);
 
-            // 1. Captura todas as regras preenchidas na interface
             const rules = [];
-            const rows = document.querySelectorAll('.rule-row');
-            
-            rows.forEach(row => {
+            document.querySelectorAll('.rule-row').forEach(row => {
                 const de = row.querySelector('.input-de').value;
                 const para = row.querySelector('.input-para').value;
-                // Só adiciona se o campo "De" estiver preenchido
-                if(de.trim() !== '') {
-                    rules.push({ de: de, para: para });
-                }
+                if(de.trim() !== '') rules.push({ de: de, para: para });
             });
-            
-            // 2. Transforma o array de regras em um texto JSON e adiciona ao envio
             formData.append('substituicoes', JSON.stringify(rules));
 
-            // Chama a nova rota Python
             fetch('/processar', {
                 method: 'POST',
                 body: formData
             })
             .then(async response => {
-                // Como não usamos mais JSON, precisamos checar se houve erro pelo HTTP Status
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(errText || "Erro no servidor ao processar o arquivo.");
-                }
+                if (!response.ok) throw new Error("Erro no servidor ao processar o arquivo.");
                 
-                // Tenta puxar o nome sugerido do cabeçalho de resposta, ou cria um padrão
                 let filename = "Modificado_" + selectedFile.name;
                 const disposition = response.headers.get('Content-Disposition');
                 if (disposition && disposition.includes('filename=')) {
-                    filename = disposition.split('filename=')[1].replace(/"/g, '');
+                    filename = disposition.split('filename="')[1].slice(0, -1);
                 }
                 
-                // Converte a resposta bruta no arquivo Blob real
                 const blob = await response.blob();
                 return { blob, filename };
             })
             .then(async ({ blob, filename }) => {
-                statusDiv.innerHTML = '<span style="color: var(--success)">✓ Processamento concluído!</span>';
+                statusDiv.innerHTML = '<span style="color: var(--success)">✓ Pronto! Escolha onde salvar...</span>';
                 
                 try {
-                    // Tenta invocar a janela moderna de salvar
                     if (window.showSaveFilePicker) {
                         const fileHandle = await window.showSaveFilePicker({
                             suggestedName: filename,
@@ -438,19 +437,15 @@
                                 }
                             }]
                         });
-                        
                         const writable = await fileHandle.createWritable();
                         await writable.write(blob);
                         await writable.close();
                         statusDiv.innerHTML = '<span style="color: var(--success)">✓ Arquivo salvo com sucesso!</span>';
                     } else {
-                        // Força o "Plano B" em navegadores incompatíveis (ex: Firefox/Safari)
-                        throw new Error("Fallback de Download");
+                        throw new Error("Fallback");
                     }
                 } catch (err) {
-                    // PLANO B: Se der erro de segurança (demora) ou não suportar, faz o download automático sem travar a interface!
                     if (err.name !== 'AbortError') {
-                        console.log("Acionando fallback de download clássico...");
                         const urlBlob = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = urlBlob;
@@ -465,13 +460,10 @@
                     }
                 }
 
-                // Libera a interface para uso novamente independente de qual rota tomou
                 this.innerText = 'Processar Outro Arquivo';
                 this.disabled = false;
                 this.style.opacity = '1';
-                selectedFile = null;
-                fileInfo.innerText = 'Nenhum arquivo selecionado';
-                fileInput.value = '';
+                
             })
             .catch(error => {
                 statusDiv.innerHTML = '<span style="color: red;">✗ Erro: ' + error.message + '</span>';
@@ -481,21 +473,14 @@
             });
         });
 
-        // LÓGICA DO HEARTBEAT
-        // Envia um ping para o backend a cada 3 segundos
+        // Heartbeat
         setInterval(() => {
             fetch('/heartbeat', { 
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
-            })
-            .then(response => {
-                if(!response.ok) throw new Error("Servidor offline");
-            })
-            .catch(error => {
-                // Se falhar silenciosamente, o servidor provavelmente já caiu
-                console.log('Falha ao enviar pulso. Servidor pode estar desligado.');
+            }).catch(() => {
                 const statusDiv = document.getElementById('status-message');
-                statusDiv.innerHTML = '<span style="color: red; font-weight:bold;">✗ Conexão Perdida</span>';
+                statusDiv.innerHTML = '<span style="color: red; font-weight:bold;">✗ Conexão Perdida com o Servidor</span>';
             });
         }, 3000);
     </script>

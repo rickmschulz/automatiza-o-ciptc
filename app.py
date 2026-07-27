@@ -1,118 +1,78 @@
 import os
-import time
-import json
-import io
-import threading
-import webbrowser
-import logging
-import re
-from flask import Flask, jsonify, render_template, request, send_file
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import openpyxl
 from docx import Document
 from pptx import Presentation
 
-# Desativa os logs padrão do Flask no terminal
-log = logging.getLogger('werkzeug')
-log.disabled = True
-
-app = Flask(__name__)
-
-last_heartbeat_time = time.time()
-TIMEOUT_SECONDS = 10
-PORT = 5000
-
-# Expressão Regular para encontrar padrões como [TEXTO] ou {{TEXTO}}
-TAG_PATTERN = r'\[.*?\]|\{\{.*?\}\}'
-
-@app.route('/')
-def home():
-    global last_heartbeat_time
-    last_heartbeat_time = time.time()
-    return render_template('index.html')
-
-@app.route('/heartbeat', methods=['POST'])
-def heartbeat():
-    global last_heartbeat_time
-    last_heartbeat_time = time.time()
-    return jsonify({"status": "alive"})
-
-@app.route('/extrair_tags', methods=['POST'])
-def extrair_tags():
-    """Lê o arquivo temporariamente e devolve todas as tags encontradas."""
-    if 'documento' not in request.files:
-        return jsonify({"error": "Nenhum arquivo enviado."}), 400
+def ler_regras_excel(caminho_excel):
+    """
+    Lê as regras de substituição do arquivo Excel.
+    Coluna A = de (Tag), Coluna B = para (Novo Texto).
+    Trata espaços em branco e converte tipos de dados numéricos para string.
+    """
+    # data_only=True garante que lemos o valor final de células com fórmulas
+    wb = openpyxl.load_workbook(caminho_excel, data_only=True)
+    planilha = wb.active
+    regras = []
     
-    arquivo = request.files['documento']
-    if arquivo.filename == '':
-        return jsonify({"error": "Arquivo vazio."}), 400
+    for linha in planilha.iter_rows(min_row=1, values_only=True):
+        de_texto = linha[0]
+        para_texto = linha[1]
+        
+        # Só processa se a coluna A não estiver vazia
+        if de_texto is not None and str(de_texto).strip() != "":
+            de_formatado = str(de_texto).strip()
+            # Se a coluna B for vazia, substitui por string vazia, caso contrário converte para texto
+            para_formatado = str(para_texto).strip() if para_texto is not None else ""
+            regras.append({'de': de_formatado, 'para': para_formatado})
+            
+    return regras
 
-    extensao = arquivo.filename.lower()
-    file_stream = io.BytesIO(arquivo.read())
-    tags_encontradas = set() # Usamos 'set' para não repetir tags iguais
-
-    try:
-        if extensao.endswith('.docx'):
-            doc = Document(file_stream)
-            # Busca em parágrafos
-            for p in doc.paragraphs:
-                tags_encontradas.update(re.findall(TAG_PATTERN, p.text))
-            # Busca em tabelas
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        for p in cell.paragraphs:
-                            tags_encontradas.update(re.findall(TAG_PATTERN, p.text))
-                            
-        elif extensao.endswith('.pptx'):
-            prs = Presentation(file_stream)
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if shape.has_text_frame:
-                        for p in shape.text_frame.paragraphs:
-                            tags_encontradas.update(re.findall(TAG_PATTERN, p.text))
-                    if shape.has_table:
-                        for row in shape.table.rows:
-                            for cell in row.cells:
-                                for p in cell.text_frame.paragraphs:
-                                    tags_encontradas.update(re.findall(TAG_PATTERN, p.text))
-                                    
-        # Converte o 'set' para uma lista normal do Python para enviar como JSON
-        return jsonify({"tags": list(tags_encontradas)})
-    except Exception as e:
-        print(f"[ERRO na Extração] {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-def processar_word(file_stream, regras):
-    doc = Document(file_stream)
+def processar_word(caminho_entrada, caminho_saida, regras):
+    """Aplica as substituições em documentos Word (.docx) iterando sobre parágrafos e tabelas."""
+    doc = Document(caminho_entrada)
+    
     def substituir_texto(paragraphs):
         for p in paragraphs:
             for regra in regras:
                 de, para = regra['de'], regra['para']
                 if de in p.text:
+                    # Tenta substituir nos 'runs' para preservar formatação (negrito, cor, etc.)
                     for run in p.runs:
                         if de in run.text:
                             run.text = run.text.replace(de, para)
+                    # Fallback: Se a tag foi dividida em múltiplos runs pelo Word,
+                    # substitui no parágrafo inteiro (pode perder formatações específicas)
                     if de in p.text:
                         p.text = p.text.replace(de, para)
+
+    # Varre parágrafos normais
     substituir_texto(doc.paragraphs)
+    
+    # Varre tabelas
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 substituir_texto(cell.paragraphs)
-    output_stream = io.BytesIO()
-    doc.save(output_stream)
-    output_stream.seek(0)
-    return output_stream
+                
+    doc.save(caminho_saida)
 
-def processar_powerpoint(file_stream, regras):
-    prs = Presentation(file_stream)
+def processar_powerpoint(caminho_entrada, caminho_saida, regras):
+    """Aplica as substituições em apresentações PowerPoint (.pptx)."""
+    prs = Presentation(caminho_entrada)
+    
     for slide in prs.slides:
         for shape in slide.shapes:
+            # Substituição em caixas de texto padrão
             if shape.has_text_frame:
                 for p in shape.text_frame.paragraphs:
                     for run in p.runs:
                         for regra in regras:
                             if regra['de'] in run.text:
                                 run.text = run.text.replace(regra['de'], regra['para'])
+            
+            # Substituição dentro de tabelas
             if shape.has_table:
                 for row in shape.table.rows:
                     for cell in row.cells:
@@ -121,64 +81,72 @@ def processar_powerpoint(file_stream, regras):
                                 for regra in regras:
                                     if regra['de'] in run.text:
                                         run.text = run.text.replace(regra['de'], regra['para'])
-    output_stream = io.BytesIO()
-    prs.save(output_stream)
-    output_stream.seek(0)
-    return output_stream
+                                        
+    prs.save(caminho_saida)
 
-@app.route('/processar', methods=['POST'])
-def processar_arquivo():
-    if 'documento' not in request.files:
-        return "Nenhum arquivo enviado.", 400
-    arquivo = request.files['documento']
-    if arquivo.filename == '':
-        return "Nome de arquivo vazio.", 400
+def iniciar_automacao():
+    """Inicia a interface de seleção e executa a lógica de automação."""
+    # Instancia e oculta a janela principal do Tkinter para mostrar apenas o popup
+    root = tk.Tk()
+    root.withdraw()
+    
+    # 1. Solicita a seleção do arquivo de relatório
+    caminho_arquivo = filedialog.askopenfilename(
+        title="Selecione o arquivo Word ou PowerPoint para alterar",
+        filetypes=[
+            ("Documentos suportados", "*.docx *.pptx"), 
+            ("Word", "*.docx"), 
+            ("PowerPoint", "*.pptx")
+        ]
+    )
+    
+    if not caminho_arquivo:
+        return # Execução silenciosamente encerrada se o usuário clicar em "Cancelar"
         
     try:
-        regras_str = request.form.get('substituicoes', '[]')
-        regras_json = json.loads(regras_str) 
-        file_stream = io.BytesIO(arquivo.read())
+        # 2. Identifica o diretório (pasta) do arquivo selecionado
+        diretorio_base = os.path.dirname(caminho_arquivo)
+        nome_arquivo = os.path.basename(caminho_arquivo)
+        extensao = nome_arquivo.lower()
         
-        print(f"\n[INFO] Processando '{arquivo.filename}' na memória...")
-        print(f"[INFO] Regras solicitadas: {regras_json}")
+        # 3. Busca obrigatoriamente o 'dados.xlsx' no mesmo diretório
+        caminho_excel = os.path.join(diretorio_base, "dados.xlsx")
         
-        extensao = arquivo.filename.lower()
-        nome_arquivo_saida = f"Modificado_{arquivo.filename}"
+        if not os.path.exists(caminho_excel):
+            messagebox.showwarning(
+                "Aviso: Planilha não encontrada", 
+                f"O arquivo 'dados.xlsx' não foi encontrado na pasta do relatório:\n\n{diretorio_base}\n\nPor favor, adicione o arquivo de dados e tente novamente."
+            )
+            return
+            
+        # 4. Lê as regras do Excel e define onde salvar o arquivo modificado
+        regras = ler_regras_excel(caminho_excel)
         
+        if not regras:
+            messagebox.showinfo("Aviso", "A planilha 'dados.xlsx' foi encontrada, mas parece estar vazia ou sem regras válidas.")
+            return
+
+        caminho_saida = os.path.join(diretorio_base, f"Modificado_{nome_arquivo}")
+        
+        # 5. Processa de acordo com o formato
         if extensao.endswith('.docx'):
-            output_stream = processar_word(file_stream, regras_json)
-            mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            processar_word(caminho_arquivo, caminho_saida, regras)
         elif extensao.endswith('.pptx'):
-            output_stream = processar_powerpoint(file_stream, regras_json)
-            mimetype = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            processar_powerpoint(caminho_arquivo, caminho_saida, regras)
         else:
-            return "Formato não suportado.", 400
+            messagebox.showerror("Erro", "Formato de arquivo não suportado. Escolha um .docx ou .pptx.")
+            return
+            
+        # 6. Exibe mensagem de sucesso ao final
+        messagebox.showinfo("Sucesso", f"Relatório modificado com sucesso!\n\nFoi gerado um novo arquivo na mesma pasta:\n{caminho_saida}")
         
-        # Injeta o nome sugerido no cabeçalho
-        response = send_file(output_stream, mimetype=mimetype)
-        response.headers['Content-Disposition'] = f'attachment; filename="{nome_arquivo_saida}"'
-        return response
-        
+    except PermissionError:
+        messagebox.showerror(
+            "Erro de Permissão", 
+            "O arquivo original ou o arquivo 'dados.xlsx' está aberto em outro programa.\n\nFeche o Word, PowerPoint ou Excel e tente novamente."
+        )
     except Exception as e:
-        print(f"[ERRO] Falha ao processar: {str(e)}")
-        return str(e), 500
+        messagebox.showerror("Erro de Processamento", f"Ocorreu um erro durante a execução:\n\n{str(e)}")
 
-def monitor_shutdown():
-    while True:
-        time.sleep(2)
-        tempo_sem_comunicacao = time.time() - last_heartbeat_time
-        if tempo_sem_comunicacao > TIMEOUT_SECONDS:
-            print(f"\n[INFO] Aba fechada. Servidor inativo por {TIMEOUT_SECONDS}s. Desligando...")
-            os._exit(0)
-
-def open_browser():
-    time.sleep(1)
-    webbrowser.open(f"http://127.0.0.1:{PORT}")
-
-if __name__ == '__main__':
-    monitor_thread = threading.Thread(target=monitor_shutdown, daemon=True)
-    monitor_thread.start()
-    browser_thread = threading.Thread(target=open_browser, daemon=True)
-    browser_thread.start()
-    print(f"Iniciando automação web na porta {PORT}...")
-    app.run(port=PORT, host="127.0.0.1")
+if __name__ == "__main__":
+    iniciar_automacao()

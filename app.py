@@ -4,27 +4,67 @@ from tkinter import filedialog, messagebox
 import openpyxl
 from docx import Document
 from pptx import Presentation
+import datetime
 
 def ler_regras_excel(caminho_excel):
     """
     Lê as regras de substituição do arquivo Excel.
     Coluna A = de (Tag), Coluna B = para (Novo Texto).
-    Trata espaços em branco e converte tipos de dados numéricos para string.
+    Detecta formatações nativas do Excel (Porcentagem, Moeda e Data) e as converte para texto no padrão brasileiro.
     """
-    # data_only=True garante que lemos o valor final de células com fórmulas
     wb = openpyxl.load_workbook(caminho_excel, data_only=True)
     planilha = wb.active
     regras = []
     
-    for linha in planilha.iter_rows(min_row=1, values_only=True):
-        de_texto = linha[0]
-        para_texto = linha[1]
+    # A iteração agora acessa os objetos da célula (cell), não apenas os valores brutos
+    for linha in planilha.iter_rows(min_row=1):
+        celula_de = linha[0]
+        celula_para = linha[1]
         
-        # Só processa se a coluna A não estiver vazia
+        de_texto = celula_de.value
+        valor_para = celula_para.value
+        
         if de_texto is not None and str(de_texto).strip() != "":
             de_formatado = str(de_texto).strip()
-            # Se a coluna B for vazia, substitui por string vazia, caso contrário converte para texto
-            para_formatado = str(para_texto).strip() if para_texto is not None else ""
+            
+            # Formatação do valor da Coluna B
+            if valor_para is None:
+                para_formatado = ""
+                
+            # Tratamento para Datas
+            elif isinstance(valor_para, datetime.datetime):
+                # Extrai o formato do Excel para verificar se tem apenas mês/ano ou data completa
+                formato_excel = str(celula_para.number_format).lower()
+                if 'mmm' in formato_excel or 'mmm-yy' in formato_excel:
+                    # Exemplo: jul/2026
+                    para_formatado = valor_para.strftime("%b/%Y").lower()
+                else:
+                    # Exemplo: 01/07/2026
+                    para_formatado = valor_para.strftime("%d/%m/%Y")
+                    
+            # Tratamento para Números (Moeda, Porcentagem e Comum)
+            elif isinstance(valor_para, (int, float)):
+                formato_excel = str(celula_para.number_format).lower()
+                
+                # Verifica se é Porcentagem
+                if '%' in formato_excel:
+                    # Multiplica por 100 e formata com 2 casas decimais, trocando ponto por vírgula
+                    para_formatado = f"{valor_para * 100:.2f}%".replace('.', ',')
+                    
+                # Verifica se é Moeda/Contábil (busca por $, R$ ou padrões de formatação contábil)
+                elif 'r$' in formato_excel or '$' in formato_excel or '_-' in formato_excel:
+                    # Formata com separador de milhar e decimal
+                    moeda_str = f"{valor_para:,.2f}"
+                    # Inverte pontos e vírgulas para o padrão brasileiro (R$ 1.000,00)
+                    moeda_str = moeda_str.replace(',', 'X').replace('.', ',').replace('X', '.')
+                    para_formatado = f"R$ {moeda_str}"
+                    
+                else:
+                    # Número comum, converte para string
+                    para_formatado = str(valor_para).strip()
+            else:
+                para_formatado = str(valor_para).strip()
+                
             regras.append({'de': de_formatado, 'para': para_formatado})
             
     return regras
@@ -59,11 +99,12 @@ def processar_word(caminho_entrada, caminho_saida, regras):
     doc.save(caminho_saida)
 
 def processar_powerpoint(caminho_entrada, caminho_saida, regras):
-    """Aplica as substituições em apresentações PowerPoint (.pptx)."""
+    """Aplica as substituições em apresentações PowerPoint (.pptx), incluindo Slide Mestre."""
     prs = Presentation(caminho_entrada)
     
-    for slide in prs.slides:
-        for shape in slide.shapes:
+    # Função auxiliar para varrer as formas (shapes) e evitar repetição de código
+    def substituir_em_shapes(shapes):
+        for shape in shapes:
             # Substituição em caixas de texto padrão
             if shape.has_text_frame:
                 for p in shape.text_frame.paragraphs:
@@ -81,6 +122,19 @@ def processar_powerpoint(caminho_entrada, caminho_saida, regras):
                                 for regra in regras:
                                     if regra['de'] in run.text:
                                         run.text = run.text.replace(regra['de'], regra['para'])
+
+    # 1. Varre os Slides Normais
+    for slide in prs.slides:
+        substituir_em_shapes(slide.shapes)
+        
+    # 2. Varre todos os Slides Mestres e seus respectivos Layouts
+    for master in prs.slide_masters:
+        # Substitui diretamente no Slide Mestre
+        substituir_em_shapes(master.shapes)
+        
+        # Substitui nos Layouts derivados deste Slide Mestre
+        for layout in master.slide_layouts:
+            substituir_em_shapes(layout.shapes)
                                         
     prs.save(caminho_saida)
 
